@@ -14,6 +14,10 @@ import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import java.util.concurrent.TimeUnit
 
+/**
+ * Universal OpenAI-Compatible Client for Hermes
+ * Works seamlessly with 9Router, OpenRouter, DeepSeek, OpenAI, Groq, Ollama, LM Studio, etc.
+ */
 class NineRouterClient(
     private var apiKey: String,
     private var baseUrl: String = "https://api.9router.com/v1"
@@ -31,8 +35,8 @@ class NineRouterClient(
     }
 
     fun updateConfig(newApiKey: String, newBaseUrl: String) {
-        this.apiKey = newApiKey
-        this.baseUrl = newBaseUrl.trimEnd('/')
+        this.apiKey = newApiKey.trim()
+        this.baseUrl = newBaseUrl.trim().trimEnd('/')
     }
 
     suspend fun createChatCompletion(
@@ -42,7 +46,7 @@ class NineRouterClient(
     ): Result<ChatMessage> = withContext(Dispatchers.IO) {
         try {
             val reqPayload = ChatCompletionRequest(
-                model = model,
+                model = model.trim(),
                 messages = messages,
                 tools = tools,
                 toolChoice = if (tools.isNullOrEmpty()) null else "auto",
@@ -50,12 +54,17 @@ class NineRouterClient(
             )
 
             val bodyStr = json.encodeToString(reqPayload)
-            val request = Request.Builder()
+            val requestBuilder = Request.Builder()
                 .url("$baseUrl/chat/completions")
-                .addHeader("Authorization", "Bearer $apiKey")
                 .addHeader("Content-Type", "application/json")
                 .addHeader("HTTP-Referer", "https://hermes-agent.local")
                 .addHeader("X-Title", "Hermes Android Native")
+
+            if (apiKey.isNotBlank()) {
+                requestBuilder.addHeader("Authorization", "Bearer $apiKey")
+            }
+
+            val request = requestBuilder
                 .post(bodyStr.toRequestBody("application/json".toMediaType()))
                 .build()
 
@@ -63,16 +72,16 @@ class NineRouterClient(
                 val responseBody = response.body?.string() ?: ""
                 if (!response.isSuccessful) {
                     return@withContext Result.failure(
-                        Exception("9Router HTTP ${response.code}: $responseBody")
+                        Exception("AI Provider ($baseUrl) HTTP ${response.code}: $responseBody")
                     )
                 }
 
                 val chatResponse = json.decodeFromString<ChatCompletionResponse>(responseBody)
                 val choice = chatResponse.choices.firstOrNull()
-                    ?: return@withContext Result.failure(Exception("Empty choices in 9Router response"))
+                    ?: return@withContext Result.failure(Exception("Empty choices from provider: $responseBody"))
 
                 val message = choice.message
-                    ?: return@withContext Result.failure(Exception("Message is null in choice"))
+                    ?: return@withContext Result.failure(Exception("Message payload is null"))
 
                 Result.success(message)
             }
