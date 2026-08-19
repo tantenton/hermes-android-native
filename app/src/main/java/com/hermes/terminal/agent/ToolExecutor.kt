@@ -3,14 +3,13 @@ package com.hermes.terminal.agent
 import android.content.Context
 import android.os.BatteryManager
 import android.os.Build
-import android.os.VibrationEffect
-import android.os.Vibrator
-import android.os.VibratorManager
 import com.hermes.terminal.model.ToolDefinition
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
@@ -39,7 +38,7 @@ class ToolExecutor(private val context: Context) {
                                 put("description", "Perintah terminal yang ingin dieksekusi (e.g. 'ls -la', 'ps -A', 'uname -a')")
                             }
                         }
-                        put("required", buildJsonObject { put("0", "command") })
+                        put("required", buildJsonArray { add(JsonPrimitive("command")) })
                     }
                 )
             ),
@@ -55,7 +54,7 @@ class ToolExecutor(private val context: Context) {
                                 put("description", "Path lengkap ke file yang ingin dibaca.")
                             }
                         }
-                        put("required", buildJsonObject { put("0", "path") })
+                        put("required", buildJsonArray { add(JsonPrimitive("path")) })
                     }
                 )
             ),
@@ -75,9 +74,9 @@ class ToolExecutor(private val context: Context) {
                                 put("description", "Isi teks yang akan ditulis ke file.")
                             }
                         }
-                        put("required", buildJsonObject {
-                            put("0", "path")
-                            put("1", "content")
+                        put("required", buildJsonArray {
+                            add(JsonPrimitive("path"))
+                            add(JsonPrimitive("content"))
                         })
                     }
                 )
@@ -88,7 +87,12 @@ class ToolExecutor(private val context: Context) {
                     description = "Mengambil status baterai, RAM, CPU, dan metadata hardware Android.",
                     parameters = buildJsonObject {
                         put("type", "object")
-                        putJsonObject("properties") {}
+                        putJsonObject("properties") {
+                            putJsonObject("detail") {
+                                put("type", "boolean")
+                                put("description", "Set true untuk informasi lengkap.")
+                            }
+                        }
                     }
                 )
             ),
@@ -104,7 +108,7 @@ class ToolExecutor(private val context: Context) {
                                 put("description", "URL target (HTTP/HTTPS)")
                             }
                         }
-                        put("required", buildJsonObject { put("0", "url") })
+                        put("required", buildJsonArray { add(JsonPrimitive("url")) })
                     }
                 )
             )
