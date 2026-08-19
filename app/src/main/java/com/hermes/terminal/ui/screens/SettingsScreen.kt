@@ -5,13 +5,13 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ArrowBack
-import androidx.compose.material.icons.filled.AutoAwesome
-import androidx.compose.material.icons.filled.Save
+import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -23,6 +23,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.hermes.terminal.ui.theme.*
+import kotlinx.coroutines.launch
 
 data class ProviderPreset(
     val name: String,
@@ -39,6 +40,7 @@ fun SettingsScreen(
     currentModel: String,
     currentHubUrl: String,
     currentNodeId: String,
+    onFetchModels: suspend (baseUrl: String, apiKey: String) -> Result<List<String>>,
     onSave: (apiKey: String, baseUrl: String, model: String, hubUrl: String, nodeId: String) -> Unit,
     onBack: () -> Unit
 ) {
@@ -47,6 +49,14 @@ fun SettingsScreen(
     var modelInput by remember { mutableStateOf(currentModel) }
     var hubUrl by remember { mutableStateOf(currentHubUrl) }
     var nodeId by remember { mutableStateOf(currentNodeId) }
+
+    var isFetching by remember { mutableStateOf(false) }
+    var fetchStatusMessage by remember { mutableStateOf<String?>(null) }
+    var fetchedModels by remember { mutableStateOf<List<String>>(emptyList()) }
+    var modelSearchQuery by remember { mutableStateOf("") }
+    var showModelDialog by remember { mutableStateOf(false) }
+
+    val scope = rememberCoroutineScope()
 
     val presets = listOf(
         ProviderPreset(
@@ -119,7 +129,7 @@ fun SettingsScreen(
             ) {
                 Icon(Icons.Default.AutoAwesome, contentDescription = null, tint = NeonGreen)
                 Text(
-                    "UNIVERSAL AI PROVIDER (OPENAI-COMPATIBLE)",
+                    "UNIVERSAL AI PROVIDER",
                     color = NeonGreen,
                     fontWeight = FontWeight.Bold,
                     fontSize = 13.sp,
@@ -127,15 +137,8 @@ fun SettingsScreen(
                 )
             }
 
-            Text(
-                "Hermes bisa pakai provider AI apa saja! Pilih preset di bawah untuk auto-fill atau ketik Base URL & Model custom kamu sendiri:",
-                color = TextMuted,
-                fontSize = 12.sp,
-                lineHeight = 16.sp
-            )
-
-            // Preset Chips Carousel
-            Text("⚡ Quick Provider Presets (Tap to Fill):", color = NeonCyan, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+            // Presets
+            Text("⚡ Quick Presets:", color = NeonCyan, fontSize = 12.sp, fontWeight = FontWeight.Bold)
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -152,6 +155,7 @@ fun SettingsScreen(
                             .clickable {
                                 baseUrl = preset.baseUrl
                                 modelInput = preset.defaultModel
+                                fetchStatusMessage = null
                             }
                             .padding(horizontal = 12.dp, vertical = 8.dp)
                     ) {
@@ -170,7 +174,7 @@ fun SettingsScreen(
             OutlinedTextField(
                 value = baseUrl,
                 onValueChange = { baseUrl = it },
-                label = { Text("AI Provider Base URL") },
+                label = { Text("Provider Base URL") },
                 placeholder = { Text("https://api.9router.com/v1 atau https://openrouter.ai/api/v1") },
                 modifier = Modifier.fillMaxWidth(),
                 singleLine = true,
@@ -186,7 +190,7 @@ fun SettingsScreen(
             OutlinedTextField(
                 value = apiKey,
                 onValueChange = { apiKey = it },
-                label = { Text("API Key (Kosongkan jika Ollama/Local)") },
+                label = { Text("API Key (Opsional jika Local Ollama)") },
                 placeholder = { Text("sk-...") },
                 modifier = Modifier.fillMaxWidth(),
                 singleLine = true,
@@ -198,45 +202,105 @@ fun SettingsScreen(
                 )
             )
 
-            // Model Name Field (100% Free Text Input!)
-            OutlinedTextField(
-                value = modelInput,
-                onValueChange = { modelInput = it },
-                label = { Text("Model Name (Ketik nama model apa saja)") },
-                placeholder = { Text("e.g. deepseek/deepseek-r1, gpt-4o, claude-3-7-sonnet") },
-                modifier = Modifier.fillMaxWidth(),
-                singleLine = true,
-                colors = OutlinedTextFieldDefaults.colors(
-                    focusedBorderColor = NeonPurple,
-                    unfocusedBorderColor = TerminalBorder,
-                    focusedTextColor = TextCode,
-                    unfocusedTextColor = TextCode
+            // 🚀 Tombol AUTO FETCH MODELS!
+            Button(
+                onClick = {
+                    if (baseUrl.isBlank()) return@Button
+                    isFetching = true
+                    fetchStatusMessage = "Mengambil daftar model dari $baseUrl/models..."
+                    scope.launch {
+                        val result = onFetchModels(baseUrl, apiKey)
+                        isFetching = false
+                        result.fold(
+                            onSuccess = { models ->
+                                fetchedModels = models
+                                fetchStatusMessage = "✓ Berhasil memuat ${models.size} model dari provider!"
+                                showModelDialog = true
+                            },
+                            onFailure = { error ->
+                                fetchStatusMessage = "❌ Gagal fetch: ${error.message}"
+                            }
+                        )
+                    }
+                },
+                enabled = !isFetching && baseUrl.isNotBlank(),
+                colors = ButtonDefaults.buttonColors(containerColor = NeonPurple),
+                shape = RoundedCornerShape(8.dp),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                if (isFetching) {
+                    CircularProgressIndicator(modifier = Modifier.size(18.dp), color = Color.White, strokeWidth = 2.dp)
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("FETCHING MODELS...", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                } else {
+                    Icon(Icons.Default.Refresh, contentDescription = "Fetch", tint = Color.White, modifier = Modifier.size(18.dp))
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("🔄 FETCH MODELS DARI PROVIDER", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                }
+            }
+
+            if (fetchStatusMessage != null) {
+                Text(
+                    text = fetchStatusMessage!!,
+                    color = if (fetchStatusMessage!!.startsWith("✓")) NeonGreen else AlertRed,
+                    fontSize = 11.sp,
+                    fontFamily = FontFamily.Monospace
                 )
-            )
+            }
 
-            // Suggested Models Chips
-            val currentPreset = presets.find { baseUrl.trimEnd('/') == it.baseUrl.trimEnd('/') }
-            val suggestions = currentPreset?.suggestedModels ?: listOf(
-                "deepseek/deepseek-r1",
-                "anthropic/claude-3-7-sonnet",
-                "google/gemini-2.0-flash",
-                "openai/gpt-4o",
-                "deepseek-reasoner"
-            )
+            // Model Name Field
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                OutlinedTextField(
+                    value = modelInput,
+                    onValueChange = { modelInput = it },
+                    label = { Text("Active Model Name") },
+                    placeholder = { Text("e.g. deepseek/deepseek-r1") },
+                    modifier = Modifier.weight(1f),
+                    singleLine = true,
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedBorderColor = NeonPurple,
+                        unfocusedBorderColor = TerminalBorder,
+                        focusedTextColor = TextCode,
+                        unfocusedTextColor = TextCode
+                    )
+                )
 
-            Text("💡 Model Suggestions (Tap to select):", color = TextMuted, fontSize = 11.sp)
+                if (fetchedModels.isNotEmpty()) {
+                    Spacer(modifier = Modifier.width(8.dp))
+                    IconButton(
+                        onClick = { showModelDialog = true },
+                        modifier = Modifier
+                            .background(TerminalSurface, RoundedCornerShape(8.dp))
+                            .border(1.dp, NeonPurple, RoundedCornerShape(8.dp))
+                    ) {
+                        Icon(Icons.Default.List, contentDescription = "Browse Models", tint = NeonPurple)
+                    }
+                }
+            }
+
+            // Quick Suggestions Chips
+            val displaySuggestions = if (fetchedModels.isNotEmpty()) {
+                fetchedModels.take(8)
+            } else {
+                listOf("deepseek/deepseek-r1", "anthropic/claude-3-7-sonnet", "google/gemini-2.0-flash", "openai/gpt-4o", "deepseek-reasoner")
+            }
+
+            Text("💡 Model Suggestions (Tap to apply):", color = TextMuted, fontSize = 11.sp)
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
                     .horizontalScroll(rememberScrollState()),
                 horizontalArrangement = Arrangement.spacedBy(6.dp)
             ) {
-                suggestions.forEach { sugModel ->
+                displaySuggestions.forEach { sugModel ->
                     val isCur = modelInput.trim() == sugModel
                     Button(
                         onClick = { modelInput = sugModel },
                         colors = ButtonDefaults.buttonColors(
-                            containerColor = if (isCur) NeonGreen.copy(alpha = 0.2f) else TerminalSurface
+                            containerColor = if (isCur) NeonGreen.copy(alpha = 0.25f) else TerminalSurface
                         ),
                         contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
                         shape = RoundedCornerShape(6.dp),
@@ -309,5 +373,83 @@ fun SettingsScreen(
                 Text("SAVE & APPLY CONFIGURATION", color = Color.Black, fontWeight = FontWeight.Bold)
             }
         }
+    }
+
+    // Modal Dialog Daftar Model yang Di-fetch
+    if (showModelDialog && fetchedModels.isNotEmpty()) {
+        AlertDialog(
+            onDismissRequest = { showModelDialog = false },
+            containerColor = TerminalSurface,
+            title = {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("Select Model (${fetchedModels.size})", color = NeonCyan, fontSize = 15.sp, fontFamily = FontFamily.Monospace)
+                    IconButton(onClick = { showModelDialog = false }) {
+                        Icon(Icons.Default.Close, contentDescription = "Close", tint = TextMuted)
+                    }
+                }
+            },
+            text = {
+                Column(modifier = Modifier.fillMaxWidth().heightIn(max = 400.dp)) {
+                    OutlinedTextField(
+                        value = modelSearchQuery,
+                        onValueChange = { modelSearchQuery = it },
+                        placeholder = { Text("Filter model...", fontSize = 12.sp, color = TextMuted) },
+                        leadingIcon = { Icon(Icons.Default.Search, contentDescription = null, tint = TextMuted) },
+                        modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp),
+                        singleLine = true,
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = NeonCyan,
+                            unfocusedBorderColor = TerminalBorder,
+                            focusedTextColor = TextPrimary,
+                            unfocusedTextColor = TextPrimary
+                        )
+                    )
+
+                    val filteredList = fetchedModels.filter { it.contains(modelSearchQuery, ignoreCase = true) }
+
+                    LazyColumn(
+                        modifier = Modifier.fillMaxWidth().weight(1f),
+                        verticalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        items(filteredList) { itemModel ->
+                            val isSelected = modelInput.trim() == itemModel
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(6.dp))
+                                    .background(if (isSelected) NeonGreen.copy(alpha = 0.2f) else TerminalBackground)
+                                    .clickable {
+                                        modelInput = itemModel
+                                        showModelDialog = false
+                                    }
+                                    .padding(horizontal = 10.dp, vertical = 8.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    itemModel,
+                                    fontSize = 12.sp,
+                                    fontFamily = FontFamily.Monospace,
+                                    color = if (isSelected) NeonGreen else TextPrimary,
+                                    modifier = Modifier.weight(1f)
+                                )
+                                if (isSelected) {
+                                    Text("✓", color = NeonGreen, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showModelDialog = false }) {
+                    Text("TUTUP", color = NeonCyan)
+                }
+            }
+        )
     }
 }

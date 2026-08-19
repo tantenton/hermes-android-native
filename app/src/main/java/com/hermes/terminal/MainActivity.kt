@@ -66,6 +66,9 @@ class MainActivity : ComponentActivity() {
                         currentModel = activeModel,
                         currentHubUrl = activeHubUrl,
                         currentNodeId = activeNodeId,
+                        onFetchModels = { targetUrl, targetKey ->
+                            apiClient.fetchAvailableModels(targetUrl, targetKey)
+                        },
                         onSave = { newKey, newUrl, newModel, newHub, newNode ->
                             activeApiKey = newKey
                             activeBaseUrl = newUrl
