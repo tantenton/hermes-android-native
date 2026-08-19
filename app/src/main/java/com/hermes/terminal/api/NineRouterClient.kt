@@ -151,7 +151,9 @@ class NineRouterClient(
                 // Support both standard JSON response and SSE streamed "data: {...}" chunks
                 if (responseBody.trimStart().startsWith("data:")) {
                     var fullContent = ""
-                    val toolCallsMap = mutableMapOf<Int, MutableMap<String, String>>()
+                    val toolIdMap = mutableMapOf<Int, String>()
+                    val toolNameMap = mutableMapOf<Int, String>()
+                    val toolArgsMap = mutableMapOf<Int, StringBuilder>()
 
                     responseBody.lineSequence().forEach { rawLine ->
                         val line = rawLine.trim()
@@ -162,6 +164,13 @@ class NineRouterClient(
                                     val chunk = json.decodeFromString<ChatCompletionResponse>(jsonStr)
                                     chunk.choices.firstOrNull()?.delta?.let { delta ->
                                         delta.content?.let { fullContent += it }
+                                        delta.toolCalls?.forEachIndexed { idx, tc ->
+                                            if (tc.id.isNotEmpty()) toolIdMap[idx] = tc.id
+                                            if (tc.function.name.isNotEmpty()) toolNameMap[idx] = tc.function.name
+                                            if (tc.function.arguments.isNotEmpty()) {
+                                                toolArgsMap.getOrPut(idx) { StringBuilder() }.append(tc.function.arguments)
+                                            }
+                                        }
                                     }
                                 } catch (e: Exception) {
                                     // ignore parse errors for partial chunks
@@ -170,7 +179,24 @@ class NineRouterClient(
                         }
                     }
 
-                    val message = ChatMessage(role = "assistant", content = fullContent.ifEmpty { "OK" })
+                    val compiledToolCalls = mutableListOf<ToolCall>()
+                    toolNameMap.forEach { (idx, name) ->
+                        val id = toolIdMap[idx] ?: "tool_${System.currentTimeMillis()}_$idx"
+                        val args = toolArgsMap[idx]?.toString() ?: "{}"
+                        compiledToolCalls.add(
+                            ToolCall(
+                                id = id,
+                                type = "function",
+                                function = FunctionCall(name = name, arguments = args)
+                            )
+                        )
+                    }
+
+                    val message = ChatMessage(
+                        role = "assistant",
+                        content = fullContent.ifBlank { if (compiledToolCalls.isNotEmpty()) null else "OK" },
+                        toolCalls = compiledToolCalls.ifEmpty { null }
+                    )
                     return@withContext Result.success(message)
                 } else {
                     val chatResponse = json.decodeFromString<ChatCompletionResponse>(responseBody)
