@@ -3,6 +3,8 @@ package com.hermes.terminal.api
 import com.hermes.terminal.model.ChatCompletionRequest
 import com.hermes.terminal.model.ChatCompletionResponse
 import com.hermes.terminal.model.ChatMessage
+import com.hermes.terminal.model.FunctionCall
+import com.hermes.terminal.model.ToolCall
 import com.hermes.terminal.model.ToolDefinition
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -21,7 +23,7 @@ import java.util.concurrent.TimeUnit
 
 /**
  * Universal OpenAI-Compatible Client for Hermes
- * Works seamlessly with 9Router, OpenRouter, DeepSeek, OpenAI, Groq, Ollama, LM Studio, etc.
+ * Works seamlessly with 9Router, Marketku, OpenRouter, DeepSeek, OpenAI, Groq, Ollama, LM Studio, etc.
  */
 class NineRouterClient(
     private var apiKey: String,
@@ -72,14 +74,13 @@ class NineRouterClient(
                 try {
                     val root = json.decodeFromString<JsonObject>(body)
                     
-                    // 1. OpenAI / OpenRouter / 9Router format: {"data": [{"id": "model-id"}, ...]}
+                    // 1. OpenAI / OpenRouter / 9Router / Marketku format: {"data": [{"id": "model-id"}, ...]}
                     if (root.containsKey("data") && root["data"] is JsonArray) {
                         val dataArray = root["data"]!!.jsonArray
                         for (elem in dataArray) {
-                            if (elem is JsonObject && elem.containsKey("id")) {
-                                elem["id"]?.jsonPrimitive?.content?.let { modelIds.add(it) }
-                            } else if (elem is JsonObject && elem.containsKey("name")) {
-                                elem["name"]?.jsonPrimitive?.content?.let { modelIds.add(it) }
+                            if (elem is JsonObject) {
+                                val id = elem["id"]?.jsonPrimitive?.content ?: elem["name"]?.jsonPrimitive?.content
+                                id?.let { modelIds.add(it) }
                             }
                         }
                     }
@@ -147,14 +148,41 @@ class NineRouterClient(
                     )
                 }
 
-                val chatResponse = json.decodeFromString<ChatCompletionResponse>(responseBody)
-                val choice = chatResponse.choices.firstOrNull()
-                    ?: return@withContext Result.failure(Exception("Empty choices from provider: $responseBody"))
+                // Support both standard JSON response and SSE streamed "data: {...}" chunks
+                if (responseBody.trimStart().startsWith("data:")) {
+                    var fullContent = ""
+                    val toolCallsMap = mutableMapOf<Int, MutableMap<String, String>>()
 
-                val message = choice.message
-                    ?: return@withContext Result.failure(Exception("Message payload is null"))
+                    responseBody.lineSequence().forEach { rawLine ->
+                        val line = rawLine.trim()
+                        if (line.startsWith("data:") && !line.contains("[DONE]")) {
+                            val jsonStr = line.substringAfter("data:").trim()
+                            if (jsonStr.isNotEmpty()) {
+                                try {
+                                    val chunk = json.decodeFromString<ChatCompletionResponse>(jsonStr)
+                                    chunk.choices.firstOrNull()?.delta?.let { delta ->
+                                        delta.content?.let { fullContent += it }
+                                    }
+                                } catch (e: Exception) {
+                                    // ignore parse errors for partial chunks
+                                }
+                            }
+                        }
+                    }
 
-                Result.success(message)
+                    val message = ChatMessage(role = "assistant", content = fullContent.ifEmpty { "OK" })
+                    return@withContext Result.success(message)
+                } else {
+                    val chatResponse = json.decodeFromString<ChatCompletionResponse>(responseBody)
+                    val choice = chatResponse.choices.firstOrNull()
+                        ?: return@withContext Result.failure(Exception("Empty choices from provider"))
+
+                    val message = choice.message
+                        ?: choice.delta
+                        ?: return@withContext Result.failure(Exception("Message payload is null"))
+
+                    Result.success(message)
+                }
             }
         } catch (e: Exception) {
             Result.failure(e)
